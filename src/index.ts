@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import Database from 'better-sqlite3';
 import { Markup, Telegraf } from 'telegraf';
 
 config();
@@ -9,15 +10,40 @@ if (!token) {
 }
 
 type CatProfile = {
+  userId: number;
   name: string;
   kotost: number;
   fedCount: number;
   pettedCount: number;
   washedCount: number;
+  pendingName: number;
+  lastMessageId: number | null;
 };
 
-const cats = new Map<number, CatProfile>();
-const pendingName = new Set<number>();
+const db = new Database('kotnost.sqlite');
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS cats (
+    user_id INTEGER PRIMARY KEY,
+    name TEXT,
+    kotost INTEGER NOT NULL DEFAULT 0,
+    fed_count INTEGER NOT NULL DEFAULT 0,
+    petted_count INTEGER NOT NULL DEFAULT 0,
+    washed_count INTEGER NOT NULL DEFAULT 0,
+    pending_name INTEGER NOT NULL DEFAULT 0,
+    last_message_id INTEGER
+  );
+`);
+
+const getCatStmt = db.prepare(
+  'SELECT user_id as userId, name, kotost, fed_count as fedCount, petted_count as pettedCount, washed_count as washedCount, pending_name as pendingName, last_message_id as lastMessageId FROM cats WHERE user_id = ?'
+);
+const upsertUserStmt = db.prepare('INSERT INTO cats (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING');
+const setPendingStmt = db.prepare('UPDATE cats SET pending_name = ? WHERE user_id = ?');
+const createCatStmt = db.prepare(
+  'UPDATE cats SET name = ?, kotost = 0, fed_count = 0, petted_count = 0, washed_count = 0, pending_name = 0 WHERE user_id = ?'
+);
+const updateLastMessageStmt = db.prepare('UPDATE cats SET last_message_id = ? WHERE user_id = ?');
 
 const bot = new Telegraf(token);
 
@@ -29,26 +55,30 @@ const mainKeyboard = Markup.inlineKeyboard([
   [Markup.button.callback('🏆 Лидерборд', 'leaderboard')],
 ]);
 
+const ensureUser = (userId: number) => {
+  upsertUserStmt.run(userId);
+  return getCatStmt.get(userId) as CatProfile;
+};
+
 const gainKotost = (userId: number, action: 'feed' | 'pet' | 'wash') => {
-  const cat = cats.get(userId);
-  if (!cat) return null;
+  const cat = ensureUser(userId);
+  if (!cat.name) return null;
 
   let score = 0;
   if (action === 'feed') {
     score = 3;
-    cat.fedCount += 1;
+    db.prepare('UPDATE cats SET fed_count = fed_count + 1, kotost = kotost + ? WHERE user_id = ?').run(score, userId);
   }
   if (action === 'pet') {
     score = 2;
-    cat.pettedCount += 1;
+    db.prepare('UPDATE cats SET petted_count = petted_count + 1, kotost = kotost + ? WHERE user_id = ?').run(score, userId);
   }
   if (action === 'wash') {
     score = 4;
-    cat.washedCount += 1;
+    db.prepare('UPDATE cats SET washed_count = washed_count + 1, kotost = kotost + ? WHERE user_id = ?').run(score, userId);
   }
 
-  cat.kotost += score;
-  return { cat, score };
+  return { cat: ensureUser(userId), score };
 };
 
 const profileText = (cat: CatProfile) =>
@@ -58,50 +88,66 @@ const profileText = (cat: CatProfile) =>
   `🖐 Поглаживаний: ${cat.pettedCount}\n` +
   `🛁 Помывок: ${cat.washedCount}`;
 
+const sendOrEditMain = async (ctx: any, userId: number, text: string) => {
+  const cat = ensureUser(userId);
+
+  if (cat.lastMessageId) {
+    try {
+      await ctx.telegram.editMessageText(ctx.chat.id, cat.lastMessageId, undefined, text, {
+        reply_markup: mainKeyboard.reply_markup,
+      });
+      return;
+    } catch {
+      // If we can't edit previous message (deleted/too old), fall back to a new one.
+    }
+  }
+
+  const sent = await ctx.reply(text, mainKeyboard);
+  updateLastMessageStmt.run(sent.message_id, userId);
+};
+
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
+  const cat = ensureUser(userId);
 
-  if (!cats.has(userId)) {
-    pendingName.add(userId);
-    await ctx.reply(
+  if (!cat.name) {
+    setPendingStmt.run(1, userId);
+    await sendOrEditMain(
+      ctx,
+      userId,
       'Добро пожаловать в Котность! 🐾\nПридумай кличку для своего кота и отправь её сообщением.'
     );
     return;
   }
 
-  await ctx.reply('С возвращением в Котность! Выбирай действие:', mainKeyboard);
+  setPendingStmt.run(0, userId);
+  await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:');
 });
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
+  const cat = ensureUser(userId);
 
-  if (!pendingName.has(userId)) return;
+  if (!cat.pendingName) return;
 
   const name = ctx.message.text.trim().slice(0, 24);
   if (!name) {
-    await ctx.reply('Кличка не может быть пустой. Попробуй ещё раз.');
+    await sendOrEditMain(ctx, userId, 'Кличка не может быть пустой. Попробуй ещё раз.');
     return;
   }
 
-  cats.set(userId, {
-    name,
-    kotost: 0,
-    fedCount: 0,
-    pettedCount: 0,
-    washedCount: 0,
-  });
-  pendingName.delete(userId);
-
-  await ctx.reply(`Отлично! Твой кот "${name}" создан. Начинаем качать котость!`, mainKeyboard);
+  createCatStmt.run(name, userId);
+  await sendOrEditMain(ctx, userId, `Отлично! Твой кот "${name}" создан. Начинаем качать котость!`);
 });
 
 bot.action(['feed', 'pet', 'wash'], async (ctx) => {
   await ctx.answerCbQuery();
 
   const userId = ctx.from.id;
-  if (!cats.has(userId)) {
-    pendingName.add(userId);
-    await ctx.reply('Сначала создай кота: отправь его кличку сообщением.');
+  const cat = ensureUser(userId);
+  if (!cat.name) {
+    setPendingStmt.run(1, userId);
+    await sendOrEditMain(ctx, userId, 'Сначала создай кота: отправь его кличку сообщением.');
     return;
   }
 
@@ -116,41 +162,42 @@ bot.action(['feed', 'pet', 'wash'], async (ctx) => {
     wash: 'помыл',
   };
 
-  await ctx.reply(
+  await sendOrEditMain(
+    ctx,
+    userId,
     `Ты ${actionText[action]} кота ${result.cat.name}. +${result.score} котости!\n` +
-      `Текущая котость: ${result.cat.kotost}`,
-    mainKeyboard
+      `Текущая котость: ${result.cat.kotost}`
   );
 });
 
 bot.action('profile', async (ctx) => {
   await ctx.answerCbQuery();
 
-  const cat = cats.get(ctx.from.id);
-  if (!cat) {
-    pendingName.add(ctx.from.id);
-    await ctx.reply('Сначала создай кота: отправь его кличку сообщением.');
+  const cat = ensureUser(ctx.from.id);
+  if (!cat.name) {
+    setPendingStmt.run(1, ctx.from.id);
+    await sendOrEditMain(ctx, ctx.from.id, 'Сначала создай кота: отправь его кличку сообщением.');
     return;
   }
 
-  await ctx.reply(profileText(cat), mainKeyboard);
+  await sendOrEditMain(ctx, ctx.from.id, profileText(cat));
 });
 
 bot.action('leaderboard', async (ctx) => {
   await ctx.answerCbQuery();
 
-  if (cats.size === 0) {
-    await ctx.reply('Пока никто не прокачал котость. Будь первым!');
+  const leadersRows = db
+    .prepare('SELECT name, kotost FROM cats WHERE name IS NOT NULL ORDER BY kotost DESC LIMIT 10')
+    .all() as Array<{ name: string; kotost: number }>;
+
+  if (leadersRows.length === 0) {
+    await sendOrEditMain(ctx, ctx.from.id, 'Пока никто не прокачал котость. Будь первым!');
     return;
   }
 
-  const leaders = [...cats.entries()]
-    .sort((a, b) => b[1].kotost - a[1].kotost)
-    .slice(0, 10)
-    .map(([_, cat], index) => `${index + 1}. ${cat.name} — ${cat.kotost}`)
-    .join('\n');
+  const leaders = leadersRows.map((cat, index) => `${index + 1}. ${cat.name} — ${cat.kotost}`).join('\n');
 
-  await ctx.reply(`🏆 Топ по котости:\n${leaders}`, mainKeyboard);
+  await sendOrEditMain(ctx, ctx.from.id, `🏆 Топ по котости:\n${leaders}`);
 });
 
 bot.catch((err) => {
