@@ -92,7 +92,7 @@ bot.on('text', async (ctx) => {
   });
   pendingName.delete(userId);
 
-  await ctx.reply(`Отлично! Твой кот \"${name}\" создан. Начинаем качать котость!`, mainKeyboard);
+  await ctx.reply(`Отлично! Твой кот "${name}" создан. Начинаем качать котость!`, mainKeyboard);
 });
 
 bot.action(['feed', 'pet', 'wash'], async (ctx) => {
@@ -154,12 +154,30 @@ bot.action('leaderboard', async (ctx) => {
 });
 
 bot.catch((err) => {
-  console.error('Bot error:', err);
+  console.error('Bot runtime error:', err);
 });
 
-bot.launch().then(() => {
-  console.log('Kotnost bot started');
-});
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const launchWithRetry = async () => {
+  const retryDelayMs = Number(process.env.RETRY_DELAY_MS ?? 10000);
+
+  while (true) {
+    try {
+      await bot.launch();
+      console.log('Kotnost bot started');
+      return;
+    } catch (err) {
+      const error = err as NodeJS.ErrnoException;
+      console.error(
+        `Bot launch failed (${error.code ?? 'UNKNOWN'}). Retrying in ${retryDelayMs / 1000}s...`
+      );
+      await sleep(retryDelayMs);
+    }
+  }
+};
+
+void launchWithRetry();
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
