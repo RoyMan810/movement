@@ -1,0 +1,7 @@
+services:
+  kotnost-bot:
+    build: .
+    container_name: kotnost-bot
+    restart: unless-stopped
+    env_file:
+      - .env
