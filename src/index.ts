@@ -48,10 +48,14 @@ const updateLastMessageStmt = db.prepare('UPDATE cats SET last_message_id = ? WH
 const bot = new Telegraf(token);
 
 const mainKeyboard = Markup.inlineKeyboard([
-  [Markup.button.callback('🍗 Покормить', 'feed')],
-  [Markup.button.callback('🖐 Погладить', 'pet')],
-  [Markup.button.callback('🛁 Помыть', 'wash')],
-  [Markup.button.callback('📊 Профиль', 'profile')],
+  [
+    Markup.button.callback('🍗 Покормить', 'feed'),
+    Markup.button.callback('🖐 Погладить', 'pet'),
+  ],
+  [
+    Markup.button.callback('🛁 Помыть', 'wash'),
+    Markup.button.callback('📊 Профиль', 'profile'),
+  ],
   [Markup.button.callback('🏆 Лидерборд', 'leaderboard')],
 ]);
 
@@ -88,13 +92,18 @@ const profileText = (cat: CatProfile) =>
   `🖐 Поглаживаний: ${cat.pettedCount}\n` +
   `🛁 Помывок: ${cat.washedCount}`;
 
-const sendOrEditMain = async (ctx: any, userId: number, text: string) => {
+const sendOrEditMain = async (
+  ctx: any,
+  userId: number,
+  text: string,
+  withKeyboard: boolean = true
+) => {
   const cat = ensureUser(userId);
 
   if (cat.lastMessageId) {
     try {
       await ctx.telegram.editMessageText(ctx.chat.id, cat.lastMessageId, undefined, text, {
-        reply_markup: mainKeyboard.reply_markup,
+        reply_markup: withKeyboard ? mainKeyboard.reply_markup : undefined,
       });
       return;
     } catch {
@@ -102,7 +111,7 @@ const sendOrEditMain = async (ctx: any, userId: number, text: string) => {
     }
   }
 
-  const sent = await ctx.reply(text, mainKeyboard);
+  const sent = withKeyboard ? await ctx.reply(text, mainKeyboard) : await ctx.reply(text);
   updateLastMessageStmt.run(sent.message_id, userId);
 };
 
@@ -115,7 +124,8 @@ bot.start(async (ctx) => {
     await sendOrEditMain(
       ctx,
       userId,
-      'Добро пожаловать в Котность! 🐾\nПридумай кличку для своего кота и отправь её сообщением.'
+      'Добро пожаловать в Котность! 🐾\nПридумай кличку для своего кота и отправь её сообщением.',
+      false
     );
     return;
   }
