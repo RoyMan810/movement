@@ -42,17 +42,25 @@ const sendOrEditMain = async (
   ctx: any,
   userId: number,
   text: string,
-  withKeyboard: boolean = true
+  withKeyboard: boolean = true,
+  forceNew: boolean = false
 ) => {
   const cat = ensureUser(userId);
 
-  if (cat.lastMessageId) {
+  if (!forceNew && cat.lastMessageId) {
     try {
       await ctx.telegram.editMessageText(ctx.chat.id, cat.lastMessageId, undefined, text, {
         reply_markup: withKeyboard ? mainKeyboard.reply_markup : undefined,
       });
       return;
-    } catch {
+    } catch (err) {
+      const description = (err as { response?: { description?: string } })?.response?.description ??
+        (err as Error).message ??
+        '';
+
+      if (description.toLowerCase().includes('message is not modified')) {
+        return;
+      }
       // If we can't edit previous message (deleted/too old), fall back to a new one.
     }
   }
@@ -95,7 +103,13 @@ bot.on('text', async (ctx) => {
 
   createCatStmt.run(name, userId);
   touchInteraction(userId);
-  await sendOrEditMain(ctx, userId, `Отлично! Твой кот "${name}" создан. Начинаем качать котость!`);
+  await sendOrEditMain(
+    ctx,
+    userId,
+    `Отлично! Твой кот "${name}" создан. Начинаем качать котость!`,
+    true,
+    true
+  );
 });
 
 bot.action(['feed', 'pet', 'wash'], async (ctx) => {
