@@ -9,4 +9,6 @@ export type CatProfile = {
   washedCount: number;
   pendingName: number;
   lastMessageId: number | null;
+  lastInteractionAt: number;
+  lastReminderAt: number | null;
 };
