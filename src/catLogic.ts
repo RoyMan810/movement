@@ -33,6 +33,21 @@ if (!hasColumn('last_reminder_at')) {
   db.exec(`ALTER TABLE cats ADD COLUMN last_reminder_at INTEGER`);
 }
 
+
+const migrateLegacyNameColumn = () => {
+  if (!hasColumn('cat_name')) return;
+
+  db.exec(`
+    UPDATE cats
+    SET name = COALESCE(name, cat_name)
+    WHERE (name IS NULL OR TRIM(name) = '')
+      AND cat_name IS NOT NULL
+      AND TRIM(cat_name) <> ''
+  `);
+};
+
+migrateLegacyNameColumn();
+
 const getCatStmt = db.prepare(
   'SELECT user_id as userId, name, kotost, fed_count as fedCount, petted_count as pettedCount, washed_count as washedCount, pending_name as pendingName, last_message_id as lastMessageId, last_interaction_at as lastInteractionAt, last_reminder_at as lastReminderAt FROM cats WHERE user_id = ?'
 );
