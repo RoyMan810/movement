@@ -25,6 +25,51 @@ if (!token) {
 
 const bot = new Telegraf(token);
 const DEBUG_UPDATES = process.env.DEBUG_UPDATES === '1';
+const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
+
+type LogContext = Record<string, unknown>;
+
+const shouldLogInfo = LOG_LEVEL === 'info' || LOG_LEVEL === 'debug';
+const shouldLogDebug = LOG_LEVEL === 'debug';
+
+const logInfo = (event: string, context: LogContext = {}) => {
+  if (!shouldLogInfo) return;
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      event,
+      ...context,
+    })
+  );
+};
+
+const logDebug = (event: string, context: LogContext = {}) => {
+  if (!shouldLogDebug) return;
+  console.log(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'debug',
+      event,
+      ...context,
+    })
+  );
+};
+
+const logError = (event: string, err: unknown, context: LogContext = {}) => {
+  const error = err as { message?: string; code?: string; stack?: string };
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'error',
+      event,
+      ...context,
+      errorMessage: error?.message ?? String(err),
+      errorCode: error?.code,
+      stack: error?.stack,
+    })
+  );
+};
 
 if (DEBUG_UPDATES) {
   bot.use(async (ctx, next) => {
@@ -32,7 +77,7 @@ if (DEBUG_UPDATES) {
     const messageText = 'message' in ctx.update && 'text' in (ctx.update as { message?: { text?: string } }).message!
       ? (ctx.update as { message?: { text?: string } }).message?.text
       : undefined;
-    console.log('Incoming update:', {
+    logDebug('incoming_update', {
       updateType,
       from: ctx.from?.id,
       chat: ctx.chat?.id,
@@ -89,6 +134,7 @@ const sendOrEditMain = async (
 
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
+  logInfo('start_command_received', { userId, chatId: ctx.chat.id });
   const cat = ensureUser(userId);
 
   if (!cat.name) {
@@ -110,6 +156,7 @@ bot.start(async (ctx) => {
 
 bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
+  logInfo('text_received', { userId, chatId: ctx.chat.id });
   const cat = ensureUser(userId);
 
   if (!cat.pendingName) return;
@@ -135,6 +182,7 @@ bot.action(['feed', 'pet', 'wash'], async (ctx) => {
   await ctx.answerCbQuery();
 
   const userId = ctx.from.id;
+  logInfo('cat_action_received', { userId, chatId: ctx.chat?.id, action: ctx.match[0] });
   const cat = ensureUser(userId);
   if (!cat.name) {
     setPendingStmt.run(1, userId);
@@ -163,6 +211,7 @@ bot.action(['feed', 'pet', 'wash'], async (ctx) => {
 
 bot.action('profile', async (ctx) => {
   await ctx.answerCbQuery();
+  logInfo('profile_requested', { userId: ctx.from.id, chatId: ctx.chat?.id });
 
   const cat = ensureUser(ctx.from.id);
   if (!cat.name) {
@@ -177,6 +226,7 @@ bot.action('profile', async (ctx) => {
 
 bot.action('leaderboard', async (ctx) => {
   await ctx.answerCbQuery();
+  logInfo('leaderboard_requested', { userId: ctx.from.id, chatId: ctx.chat?.id });
 
   touchInteraction(ctx.from.id);
   const leadersRows = getLeaders();
@@ -192,7 +242,7 @@ bot.action('leaderboard', async (ctx) => {
 });
 
 bot.catch((err) => {
-  console.error('Bot runtime error:', err);
+  logError('bot_runtime_error', err);
 });
 
 if (DEBUG_UPDATES) {
@@ -238,11 +288,11 @@ const startInactivityReminderLoop = () => {
           );
           markReminderSent(cat.userId);
         } catch (err) {
-          console.error(`Failed to send inactivity reminder to user ${cat.userId}:`, err);
+          logError('reminder_send_failed', err, { userId: cat.userId });
         }
       }
     } catch (err) {
-      console.error('Inactivity reminder loop iteration failed:', err);
+      logError('reminder_loop_iteration_failed', err);
     }
   }, REMINDER_CHECK_INTERVAL_MS);
 };
@@ -259,14 +309,15 @@ const launchWithRetry = async () => {
       await bot.launch({
         allowedUpdates: ['message', 'callback_query'],
       });
-      console.log(`Kotnost bot started as @${me.username} (id=${me.id})`);
+      logInfo('bot_started', { username: me.username, botId: me.id, logLevel: LOG_LEVEL });
       startInactivityReminderLoop();
       return;
     } catch (err) {
       const error = err as NodeJS.ErrnoException;
-      console.error(
-        `Bot launch failed (${error.code ?? 'UNKNOWN'}). Retrying in ${retryDelayMs / 1000}s...`
-      );
+      logError('bot_launch_failed', err, {
+        errorCode: error.code ?? 'UNKNOWN',
+        retryDelaySeconds: retryDelayMs / 1000,
+      });
       await sleep(retryDelayMs);
     }
   }
