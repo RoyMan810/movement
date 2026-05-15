@@ -26,6 +26,23 @@ if (!token) {
 const bot = new Telegraf(token);
 const DEBUG_UPDATES = process.env.DEBUG_UPDATES === '1';
 
+if (DEBUG_UPDATES) {
+  bot.use(async (ctx, next) => {
+    const updateType = ctx.updateType;
+    const messageText = 'message' in ctx.update && 'text' in (ctx.update as { message?: { text?: string } }).message!
+      ? (ctx.update as { message?: { text?: string } }).message?.text
+      : undefined;
+    console.log('Incoming update:', {
+      updateType,
+      from: ctx.from?.id,
+      chat: ctx.chat?.id,
+      messageText,
+      callbackData: ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined,
+    });
+    await next();
+  });
+}
+
 const mainKeyboard = Markup.inlineKeyboard([
   [
     Markup.button.callback('🍗 Покормить', 'feed'),
