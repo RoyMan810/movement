@@ -24,6 +24,7 @@ if (!token) {
 }
 
 const bot = new Telegraf(token);
+const DEBUG_UPDATES = process.env.DEBUG_UPDATES === '1';
 
 const mainKeyboard = Markup.inlineKeyboard([
   [
@@ -79,14 +80,15 @@ bot.start(async (ctx) => {
       ctx,
       userId,
       'Добро пожаловать в Котность! 🐾\nПридумай кличку для своего кота и отправь её сообщением.',
-      false
+      false,
+      true
     );
     return;
   }
 
   setPendingStmt.run(0, userId);
   touchInteraction(userId);
-  await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:');
+  await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:', true, true);
 });
 
 bot.on('text', async (ctx) => {
@@ -176,6 +178,23 @@ bot.catch((err) => {
   console.error('Bot runtime error:', err);
 });
 
+if (DEBUG_UPDATES) {
+  bot.use(async (ctx, next) => {
+    const updateType = ctx.updateType;
+    const messageText = 'message' in ctx.update && 'text' in (ctx.update as { message?: { text?: string } }).message!
+      ? (ctx.update as { message?: { text?: string } }).message?.text
+      : undefined;
+    console.log('Incoming update:', {
+      updateType,
+      from: ctx.from?.id,
+      chat: ctx.chat?.id,
+      messageText,
+      callbackData: ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined,
+    });
+    await next();
+  });
+}
+
 
 const INACTIVITY_SECONDS = 8 * 60 * 60;
 const IGNORE_PENALTY = 2;
@@ -218,8 +237,12 @@ const launchWithRetry = async () => {
 
   while (true) {
     try {
-      await bot.launch();
-      console.log('Kotnost bot started');
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+      const me = await bot.telegram.getMe();
+      await bot.launch({
+        allowedUpdates: ['message', 'callback_query'],
+      });
+      console.log(`Kotnost bot started as @${me.username} (id=${me.id})`);
       startInactivityReminderLoop();
       return;
     } catch (err) {
