@@ -79,14 +79,15 @@ bot.start(async (ctx) => {
       ctx,
       userId,
       'Добро пожаловать в Котность! 🐾\nПридумай кличку для своего кота и отправь её сообщением.',
-      false
+      false,
+      true
     );
     return;
   }
 
   setPendingStmt.run(0, userId);
   touchInteraction(userId);
-  await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:');
+  await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:', true, true);
 });
 
 bot.on('text', async (ctx) => {
