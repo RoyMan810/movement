@@ -91,7 +91,7 @@ docker compose down
 - `src/index.ts` — точка входа и Telegram-обработчики, запуск reminder-цикла.
 - `src/catLogic.ts` — логика работы с БД, котостью, активностью и штрафами.
 - `src/types.ts` — общие TypeScript-типы.
-- `kotnost.sqlite` — локальная SQLite база (создаётся автоматически при запуске).
+- `kotnost.sqlite` — локальная SQLite база (по умолчанию). Путь можно переопределить через `SQLITE_PATH`.
 - `Dockerfile` — контейнеризация приложения.
 - `docker-compose.yml` — запуск сервиса через Compose.
 - `.env.example` — пример переменных окружения.

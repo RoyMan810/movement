@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 
 import type { CatAction, CatProfile } from './types';
 
-const db = new Database('kotnost.sqlite');
+const dbPath = process.env.SQLITE_PATH || 'kotnost.sqlite';
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
