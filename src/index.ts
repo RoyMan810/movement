@@ -2,12 +2,16 @@ import { config } from 'dotenv';
 import { Markup, Telegraf } from 'telegraf';
 
 import {
+  applyIgnorePenalty,
   createCatStmt,
   ensureUser,
   gainKotost,
+  getInactiveCatsForReminder,
   getLeaders,
+  markReminderSent,
   profileText,
   setPendingStmt,
+  touchInteraction,
   updateLastMessageStmt,
 } from './catLogic';
 import type { CatAction } from './types';
@@ -73,6 +77,7 @@ bot.start(async (ctx) => {
   }
 
   setPendingStmt.run(0, userId);
+  touchInteraction(userId);
   await sendOrEditMain(ctx, userId, 'С возвращением в Котность! Выбирай действие:');
 });
 
@@ -89,6 +94,7 @@ bot.on('text', async (ctx) => {
   }
 
   createCatStmt.run(name, userId);
+  touchInteraction(userId);
   await sendOrEditMain(ctx, userId, `Отлично! Твой кот "${name}" создан. Начинаем качать котость!`);
 });
 
@@ -132,12 +138,14 @@ bot.action('profile', async (ctx) => {
     return;
   }
 
+  touchInteraction(ctx.from.id);
   await sendOrEditMain(ctx, ctx.from.id, profileText(cat));
 });
 
 bot.action('leaderboard', async (ctx) => {
   await ctx.answerCbQuery();
 
+  touchInteraction(ctx.from.id);
   const leadersRows = getLeaders();
 
   if (leadersRows.length === 0) {
@@ -154,6 +162,41 @@ bot.catch((err) => {
   console.error('Bot runtime error:', err);
 });
 
+
+const INACTIVITY_SECONDS = 8 * 60 * 60;
+const IGNORE_PENALTY = 2;
+const REMINDER_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+
+const startInactivityReminderLoop = () => {
+  setInterval(async () => {
+    try {
+      const inactiveCats = getInactiveCatsForReminder(INACTIVITY_SECONDS);
+
+      for (const cat of inactiveCats) {
+        const updatedCat = applyIgnorePenalty(cat.userId, IGNORE_PENALTY);
+        const penaltyText = updatedCat.kotost < cat.kotost
+          ? `
+⚠️ За игнор напоминания -${IGNORE_PENALTY} котости.`
+          : '';
+
+        try {
+          await bot.telegram.sendMessage(
+            cat.userId,
+            `🐾 Ты давно не взаимодействовал(а) с котом ${cat.name}. Загляни к нему!${penaltyText}
+✨ Текущая котость: ${updatedCat.kotost}`,
+            mainKeyboard
+          );
+          markReminderSent(cat.userId);
+        } catch (err) {
+          console.error(`Failed to send inactivity reminder to user ${cat.userId}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error('Inactivity reminder loop iteration failed:', err);
+    }
+  }, REMINDER_CHECK_INTERVAL_MS);
+};
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const launchWithRetry = async () => {
@@ -163,6 +206,7 @@ const launchWithRetry = async () => {
     try {
       await bot.launch();
       console.log('Kotnost bot started');
+      startInactivityReminderLoop();
       return;
     } catch (err) {
       const error = err as NodeJS.ErrnoException;
