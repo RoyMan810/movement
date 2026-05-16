@@ -263,16 +263,16 @@ if (DEBUG_UPDATES) {
 }
 
 
-const INACTIVITY_SECONDS = 8 * 60 * 60;
+const INACTIVITY_SECONDS = 24 * 60 * 60;
 const IGNORE_PENALTY = 2;
-const REMINDER_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const REMINDER_CHECK_INTERVAL_MS = Number(process.env.REMINDER_CHECK_INTERVAL_MS ?? 60 * 60 * 1000);
 
-const startInactivityReminderLoop = () => {
-  setInterval(async () => {
-    try {
-      const inactiveCats = getInactiveCatsForReminder(INACTIVITY_SECONDS);
+const runReminderIteration = async () => {
+  try {
+    const inactiveCats = getInactiveCatsForReminder(INACTIVITY_SECONDS);
+    logInfo('reminder_candidates_fetched', { count: inactiveCats.length, inactivitySeconds: INACTIVITY_SECONDS });
 
-      for (const cat of inactiveCats) {
+    for (const cat of inactiveCats) {
         const updatedCat = applyIgnorePenalty(cat.userId, IGNORE_PENALTY);
         const penaltyText = updatedCat.kotost < cat.kotost
           ? `
@@ -284,16 +284,22 @@ const startInactivityReminderLoop = () => {
             cat.userId,
             `🐾 Ты давно не взаимодействовал(а) с котом ${cat.name}. Загляни к нему!${penaltyText}
 ✨ Текущая котость: ${updatedCat.kotost}`,
-            mainKeyboard
+            { reply_markup: mainKeyboard.reply_markup }
           );
           markReminderSent(cat.userId);
         } catch (err) {
           logError('reminder_send_failed', err, { userId: cat.userId });
         }
       }
-    } catch (err) {
-      logError('reminder_loop_iteration_failed', err);
-    }
+  } catch (err) {
+    logError('reminder_loop_iteration_failed', err);
+  }
+};
+
+const startInactivityReminderLoop = () => {
+  void runReminderIteration();
+  setInterval(() => {
+    void runReminderIteration();
   }, REMINDER_CHECK_INTERVAL_MS);
 };
 

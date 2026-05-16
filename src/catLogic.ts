@@ -111,9 +111,9 @@ export const getInactiveCatsForReminder = (inactiveSeconds: number) =>
        FROM cats
        WHERE name IS NOT NULL
          AND last_interaction_at <= strftime('%s','now') - ?
-         AND (last_reminder_at IS NULL OR last_reminder_at < last_interaction_at)`
+         AND strftime('%s','now') - COALESCE(last_reminder_at, last_interaction_at) >= ?`
     )
-    .all(inactiveSeconds) as CatProfile[];
+    .all(inactiveSeconds, inactiveSeconds) as CatProfile[];
 
 export const profileText = (cat: CatProfile) =>
   `🐱 Кличка: ${cat.name}\n` +
